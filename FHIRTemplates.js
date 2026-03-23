@@ -452,3 +452,175 @@ const TEMPLATES = {
         getValue: (container) => container.querySelector('input.fhir-input').value
     }
 };
+
+// ====================================================================
+// SECTIONS — Definice klinických sekcí (Composition.section)
+//
+// Sekce jsou blokové záhlaví/oddělovače v editoru. Obsah pod záhlavím
+// patří do dané sekce, dokud nenarazí na další sekci nebo konec dokumentu.
+//
+// Konfigurace:
+// - allowedResources: typy FHIR resources povolené v sekci (['*'] = vše)
+// - allowedChildren:  typy podsekci povolené uvnitř (['*'] = vše, [] = žádné)
+// - allowSameTypeChild: zda lze vnořit podsekci stejného typu (výchozí false)
+// - showInList: zda se sekce zobrazuje v primárním seznamu F2 (výchozí true)
+//
+// Jak přidat novou sekci:
+// 1. Přidejte nový klíč do objektu SECTIONS.
+// 2. Vyplňte id, label, icon, keywords, barvy, allowedResources a LOINC kód.
+// 3. Sekce se automaticky objeví v nabídce F2.
+// ====================================================================
+const SECTIONS = {
+    /**
+     * Obecná sekce — výchozí text bez speciálního účelu.
+     * Představuje hlavní okno editoru bez vizuální sekce.
+     * Zobrazuje se ve vyhledávání pouze pokud ji nadřazená sekce
+     * uvádí v allowedChildren.
+     */
+    general: {
+        id: 'general',
+        label: 'Obecné',
+        icon: 'fa-file-lines',
+        keywords: ['obecné', 'obecne', 'general'],
+        color: 'transparent',
+        borderColor: 'transparent',
+        allowedResources: ['*'],
+        allowedChildren: ['*'],
+        allowSameTypeChild: false,
+        showInList: false,          // Nezobrazuje se v primárním seznamu F2
+        code: { system: 'http://loinc.org', code: '51848-0', display: 'Assessment note' },
+        description: 'Obecná sekce — přijímá všechny typy resources'
+    },
+
+    /**
+     * Subjektivní obtíže pacienta.
+     * Doporučené budoucí resources: Observation, QuestionnaireResponse
+     */
+    subjective: {
+        id: 'subjective',
+        label: 'Subj.',
+        icon: 'fa-comment-medical',
+        keywords: ['subj', 'subjektivně', 'subjektivne'],
+        color: '#fef9c3',
+        borderColor: '#fde047',
+        allowedResources: [],
+        allowedChildren: [],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '61150-9', display: 'Subjective' },
+        description: 'Subjektivní obtíže — volný text, budoucí: Observation, QuestionnaireResponse'
+    },
+
+    /**
+     * Objektivní nález lékaře.
+     */
+    objective: {
+        id: 'objective',
+        label: 'Obj.',
+        icon: 'fa-stethoscope',
+        keywords: ['obj', 'objektivně', 'objektivne'],
+        color: '#dcfce7',
+        borderColor: '#86efac',
+        allowedResources: ['Observation'],
+        allowedChildren: [],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '61149-1', display: 'Objective' },
+        description: 'Objektivní nález — Observation'
+    },
+
+    /**
+     * Nynější onemocnění (NO).
+     * Budoucí resources: Observation, ImagingStudy, DiagnosticReport
+     */
+    currentIllness: {
+        id: 'currentIllness',
+        label: 'NO',
+        icon: 'fa-disease',
+        keywords: ['no', 'nynější onemocnění', 'nynejsi onemocneni'],
+        color: '#fce7f3',
+        borderColor: '#f9a8d4',
+        allowedResources: ['Observation'],
+        allowedChildren: ['objective'],     // Obj. jako podsekce NO
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '10164-2', display: 'History of present illness' },
+        description: 'Nynější onemocnění — Observation, budoucí: ImagingStudy, DiagnosticReport'
+    },
+
+    /**
+     * Epikríza.
+     * Budoucí resources: Observation, ImagingStudy, DiagnosticReport, Condition
+     */
+    epicrisis: {
+        id: 'epicrisis',
+        label: 'Epikríza',
+        icon: 'fa-clipboard-check',
+        keywords: ['epikriza', 'epikríza', 'souhrn'],
+        color: '#e0e7ff',
+        borderColor: '#a5b4fc',
+        allowedResources: ['Observation'],
+        allowedChildren: ['objective', 'therapy', 'conclusion'],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '11535-2', display: 'Hospital discharge Dx' },
+        description: 'Epikríza — Observation, budoucí: ImagingStudy, DiagnosticReport, Condition'
+    },
+
+    /**
+     * Terapie / léčba.
+     * Budoucí resources: Procedure, MedicationRequest, MedicationAdministration
+     */
+    therapy: {
+        id: 'therapy',
+        label: 'Terapie',
+        icon: 'fa-pills',
+        keywords: ['terapie', 'léčba', 'lecba'],
+        color: '#fef3c7',
+        borderColor: '#fbbf24',
+        allowedResources: [],
+        allowedChildren: [],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '18776-5', display: 'Plan of treatment' },
+        description: 'Terapie — budoucí: Procedure, MedicationRequest, MedicationAdministration'
+    },
+
+    /**
+     * Závěr.
+     * Budoucí resources: Condition, ClinicalImpression
+     */
+    conclusion: {
+        id: 'conclusion',
+        label: 'Závěr',
+        icon: 'fa-circle-check',
+        keywords: ['záver', 'závěr', 'zaver'],
+        color: '#f3e8ff',
+        borderColor: '#c084fc',
+        allowedResources: [],
+        allowedChildren: [],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '55110-1', display: 'Conclusions' },
+        description: 'Závěr — budoucí: Condition, ClinicalImpression'
+    },
+
+    /**
+     * Doporučení / plán péče.
+     * Budoucí resources: CarePlan, ServiceRequest
+     */
+    recommendation: {
+        id: 'recommendation',
+        label: 'Doporučení',
+        icon: 'fa-hand-point-right',
+        keywords: ['doporučení', 'doporuceni', 'plan'],
+        color: '#ccfbf1',
+        borderColor: '#5eead4',
+        allowedResources: [],
+        allowedChildren: [],
+        allowSameTypeChild: false,
+        showInList: true,
+        code: { system: 'http://loinc.org', code: '18776-5', display: 'Plan of care note' },
+        description: 'Doporučení — budoucí: CarePlan, ServiceRequest'
+    }
+};

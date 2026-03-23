@@ -1,16 +1,15 @@
 /**
  * FHIRBundleBuilder.js
- * Tento soubor slouží k převodu dat mezi vizuálním textovým editorem (Quill)
- * a standardizovaným FHIR formátem (FHIR Document Bundle).
+ * Převod dat mezi vizuálním textovým editorem (Quill) a FHIR Document Bundle.
  * 
  * Co je to FHIR Document Bundle:
  * Představuje ucelený "Klinický dokument" (např. zpráva z vyšetření).
  * Skládá se z několika položek (entries):
- * 1. Composition - Hlavička dokumentu (Kdo, Kdy, O kom zapisoval) + HTML text zprávy.
+ * 1. Composition - Hlavička dokumentu + HTML text + sekce (section).
  * 2. Patient - Údaje o pacientovi.
  * 3. Practitioner - Údaje o lékaři.
  * 4. Organization - Údaje o nemocnici.
- * 5. Observation(s) - Samotné záznamy (tlak, tep...), na které se Composition odkazuje.
+ * 5. Observation(s) - Samotné záznamy (tlak, tep...), na které se sekce odkazují.
  *
  * Dependencies: mockPatient.js, mockHealthCareProvider.js, FHIRTemplates.js
  */
@@ -19,7 +18,7 @@ const FHIRBundleBuilder = {
 
     /**
      * Sestaví kompletní FHIR Document Bundle z aktuálního obsahu editoru.
-     * Tento proces probíhá při uložení nebo exportu.
+     * Dynamicky generuje Composition.section[] na základě SectionBlot elementů.
      * 
      * @param {Quill} quill - Instance Quill editoru
      * @returns {object} FHIR Bundle ve formátu JSON objektu
@@ -28,20 +27,20 @@ const FHIRBundleBuilder = {
         const currentTime = new Date().toISOString();
         const compositionId = crypto.randomUUID();
 
-        // --- 1. Generování HTML obsahu pro dokument ---
-        // Extrahuje text z editoru a očistí ho o nepotřebné atributy
+        // --- 1. Generování HTML obsahu ---
         const compositionHtml = this._buildCompositionHtml(quill);
 
-        // --- 2. Sestavení zdroje Composition (Hlavička dokumentu) ---
-        // Tento FHIR resource představuje samotný dokument (klinický zápis).
-        // Definuje autora, pacienta a obsahuje HTML text (narrative).
+        // --- 2. Analýza sekcí a resources v editoru ---
+        const sectionTree = this._buildSectionTree(quill, currentTime);
+
+        // --- 3. Sestavení Composition ---
         const compositionResource = {
             resourceType: "Composition",
             id: compositionId,
             meta: {
                 profile: ["http://hl7.org/fhir/StructureDefinition/clinicaldocument"]
             },
-            text: { // Narativní část - sem patří vygenerované HTML
+            text: {
                 status: "generated",
                 div: `<div xmlns="http://www.w3.org/1999/xhtml">${compositionHtml}</div>`
             },
@@ -54,32 +53,20 @@ const FHIRBundleBuilder = {
                 }],
                 text: "Klinický zápis"
             },
-            subject: getPatientRef(), // Na koho se dokument vztahuje (Pacient)
+            subject: getPatientRef(),
             date: currentTime,
-            author: [getPractitionerRef()], // Kdo dokument vytvořil (Lékař)
+            author: [getPractitionerRef()],
             title: "Klinický zápis",
             custodian: MOCK_HEALTHCARE_PROVIDER.organization.reference,
-            // Sekce dokumentu - Composition může mít více sekcí (zde jen Vitální funkce)
-            section: [{
-                title: "Zjištěné hodnoty",
-                code: {
-                    coding: [{
-                        system: "http://loinc.org",
-                        code: "8716-3",
-                        display: "Vital signs note"
-                    }],
-                    text: "Vitální funkce"
-                },
-                text: {
-                    status: "generated",
-                    div: '<div xmlns="http://www.w3.org/1999/xhtml">Vitální funkce zaznamenané v klinickém zápisu</div>'
-                },
-                entry: [] // Sem se následně vloží odkazy na jednotlivá měření (Observations)
-            }]
+            section: sectionTree.sections
         };
 
-        // --- 3. Sestavení kostry Bundle (obálky) ---
-        // Bundle typu 'document' vždy musí mít jako úplně první prvek 'Composition'.
+        // Pokud nejsou žádné sekce, odstraníme prázdný array
+        if (compositionResource.section.length === 0) {
+            delete compositionResource.section;
+        }
+
+        // --- 4. Sestavení Bundle ---
         const fhirBundle = {
             resourceType: "Bundle",
             id: crypto.randomUUID(),
@@ -93,22 +80,18 @@ const FHIRBundleBuilder = {
             type: "document",
             timestamp: currentTime,
             entry: [
-                // First entry is always Composition
                 {
                     fullUrl: `urn:uuid:${compositionId}`,
                     resource: compositionResource
                 },
-                // Patient
                 {
                     fullUrl: `urn:uuid:${MOCK_PATIENT.uuid}`,
                     resource: MOCK_PATIENT.resource
                 },
-                // Practitioner
                 {
                     fullUrl: `urn:uuid:${MOCK_HEALTHCARE_PROVIDER.practitioner.uuid}`,
                     resource: MOCK_HEALTHCARE_PROVIDER.practitioner.resource
                 },
-                // Organization
                 {
                     fullUrl: `urn:uuid:${MOCK_HEALTHCARE_PROVIDER.organization.uuid}`,
                     resource: MOCK_HEALTHCARE_PROVIDER.organization.resource
@@ -116,64 +99,176 @@ const FHIRBundleBuilder = {
             ]
         };
 
-        // --- 4. Iterace přes všechny interaktivní FHIR elementy v editoru ---
-        // V HTML editoru jsou tyto elementy označeny třídou '.fhir-blot'.
-        // Z každého elementu si přečteme uložená data (id, type záznamu a aktuální naměřenou hodnotu).
-        const blots = quill.root.querySelectorAll('.fhir-blot');
-        blots.forEach(blot => {
-            const id = blot.getAttribute('data-id');
-            const type = blot.getAttribute('data-type');
-            const value = blot.getAttribute('data-value');
-            const t = TEMPLATES[type];
-
-            if (t && t.buildResource && value) {
-                // Sestavení cesty (URN) unikátní v rámci dokumentu
-                const resourceUrl = `urn:uuid:${id}`;
-                
-                // Zavolání funkce buildResource z dané šablony (definované v FHIRTemplates.js), 
-                // která nám vygeneruje plnohodnotný JSON objekt v souladu s FHIR specifikací.
-                const resource = t.buildResource(id, value, currentTime);
-
-                // Add Narrative text for the resource
-                resource.text = {
-                    status: "generated",
-                    div: `<div xmlns="http://www.w3.org/1999/xhtml">${t.formatDisplay(value)}</div>`
-                };
-
-                // Odkaz z hlavičky (Composition) na toto konkrétní měření
-                compositionResource.section[0].entry.push({
-                    reference: resourceUrl
-                });
-
-                // Přidání tohoto JSON zdroje jako další položky (entry) do fyzického Bundle
-                fhirBundle.entry.push({
-                    fullUrl: resourceUrl,
-                    resource: resource
-                });
-            }
+        // Přidáme všechny resource entries do Bundle
+        sectionTree.allResources.forEach(res => {
+            fhirBundle.entry.push({
+                fullUrl: res.fullUrl,
+                resource: res.resource
+            });
         });
-
-        // If no observations, handle empty section properly
-        if (compositionResource.section[0].entry.length === 0) {
-            // FHIR does not allow empty arrays — remove entry and add emptyReason
-            delete compositionResource.section[0].entry;
-            compositionResource.section[0].emptyReason = {
-                coding: [{
-                    system: "http://terminology.hl7.org/CodeSystem/list-empty-reason",
-                    code: "nilknown",
-                    display: "Nil Known"
-                }],
-                text: "Žádné záznamy"
-            };
-        }
 
         return fhirBundle;
     },
 
     /**
+     * Analyzuje editor a vytvoří strom sekcí s přiřazenými resources.
+     * Prochází Delta operace hledá section a resource embedy.
+     * 
+     * @returns {{ sections: object[], allResources: object[] }}
+     */
+    _buildSectionTree(quill, currentTime) {
+        const delta = quill.getContents();
+        const allResources = [];
+        
+        // Stav: seznam sekcí a aktuální zásobník pro zanořování
+        const rootSections = [];
+        const sectionStack = []; // Stack pro tracking aktuální sekce (pro nesting)
+        let currentSectionEntries = []; // Entries pro aktuální sekci (nebo root)
+
+        // Projdeme všechny delta operace
+        delta.ops.forEach(op => {
+            if (!op.insert || typeof op.insert !== 'object') return;
+
+            // Nalezena sekce
+            if (op.insert['fhir-section']) {
+                const secData = op.insert['fhir-section'];
+                const sectionDef = SECTIONS[secData.sectionType];
+                if (!sectionDef || secData.sectionType === 'general') return;
+
+                const level = parseInt(secData.level) || 0;
+
+                const fhirSection = {
+                    title: sectionDef.label,
+                    code: {
+                        coding: [sectionDef.code],
+                        text: sectionDef.label
+                    },
+                    text: {
+                        status: "generated",
+                        div: `<div xmlns="http://www.w3.org/1999/xhtml">${sectionDef.description}</div>`
+                    },
+                    entry: [],
+                    section: [], // Pro zanořené sekce
+                    _level: level // Interní atribut, odstraníme před exportem
+                };
+
+                // Zařazení sekce do stromu dle level
+                if (level === 0) {
+                    // Přidáme předchozí "volné" entries do výchozí sekce pokud existují
+                    if (currentSectionEntries.length > 0 && sectionStack.length === 0) {
+                        // Resources bez sekce — vytvoříme implicitní top-level sekci
+                        rootSections.push(this._createDefaultSection(currentSectionEntries));
+                        currentSectionEntries = [];
+                    }
+                    rootSections.push(fhirSection);
+                    sectionStack.length = 0;
+                    sectionStack.push(fhirSection);
+                    currentSectionEntries = fhirSection.entry;
+                } else {
+                    // Zanořená sekce: hledáme rodiče dle level
+                    while (sectionStack.length > 0 && sectionStack[sectionStack.length - 1]._level >= level) {
+                        sectionStack.pop();
+                    }
+                    if (sectionStack.length > 0) {
+                        const parent = sectionStack[sectionStack.length - 1];
+                        parent.section.push(fhirSection);
+                    } else {
+                        rootSections.push(fhirSection);
+                    }
+                    sectionStack.push(fhirSection);
+                    currentSectionEntries = fhirSection.entry;
+                }
+            }
+
+            // Nalezen resource (FHIR blot)
+            if (op.insert['fhir-resource']) {
+                const resData = op.insert['fhir-resource'];
+                const tmpl = TEMPLATES[resData.type];
+                if (!tmpl || !tmpl.buildResource || !resData.value) return;
+
+                const resourceUrl = `urn:uuid:${resData.id}`;
+                const resource = tmpl.buildResource(resData.id, resData.value, currentTime);
+                resource.text = {
+                    status: "generated",
+                    div: `<div xmlns="http://www.w3.org/1999/xhtml">${tmpl.formatDisplay(resData.value)}</div>`
+                };
+
+                // Přidáme referenci do aktuální sekce
+                currentSectionEntries.push({ reference: resourceUrl });
+
+                // Přidáme resource do globálního seznamu pro Bundle entries
+                allResources.push({ fullUrl: resourceUrl, resource: resource });
+            }
+        });
+
+        // Zbylé volné resources (po poslední sekci nebo bez sekce vůbec)
+        if (currentSectionEntries.length > 0 && sectionStack.length === 0 && currentSectionEntries !== rootSections[rootSections.length - 1]?.entry) {
+            rootSections.push(this._createDefaultSection(currentSectionEntries));
+        }
+
+        // Vyčistíme interní atributy a prázdné arrays
+        this._cleanSectionTree(rootSections);
+
+        return { sections: rootSections, allResources };
+    },
+
+    /**
+     * Vytvoří výchozí FHIR sekci pro resources bez přiřazené sekce.
+     */
+    _createDefaultSection(entries) {
+        return {
+            title: "Zjištěné hodnoty",
+            code: {
+                coding: [{
+                    system: "http://loinc.org",
+                    code: "8716-3",
+                    display: "Vital signs note"
+                }],
+                text: "Vitální funkce"
+            },
+            text: {
+                status: "generated",
+                div: '<div xmlns="http://www.w3.org/1999/xhtml">Vitální funkce zaznamenané v klinickém zápisu</div>'
+            },
+            entry: entries
+        };
+    },
+
+    /**
+     * Vyčistí strom sekcí — odstraní interní atributy a prázdné arrays.
+     */
+    _cleanSectionTree(sections) {
+        sections.forEach(sec => {
+            delete sec._level;
+            
+            // FHIR nedovoluje prázdné arrays
+            if (sec.entry && sec.entry.length === 0) {
+                delete sec.entry;
+            }
+            if (sec.section && sec.section.length === 0) {
+                delete sec.section;
+            } else if (sec.section) {
+                this._cleanSectionTree(sec.section);
+            }
+            
+            // Pokud nemá entry ani section, přidáme emptyReason
+            if (!sec.entry && !sec.section) {
+                sec.emptyReason = {
+                    coding: [{
+                        system: "http://terminology.hl7.org/CodeSystem/list-empty-reason",
+                        code: "nilknown",
+                        display: "Nil Known"
+                    }],
+                    text: "Žádné záznamy"
+                };
+            }
+        });
+    },
+
+    /**
      * Build sanitized HTML for Composition.text.div.
-     * Preserves class (FHIR ResourceType) and id (FHIR uuid) on fhir-blot spans/divs.
-     * Removes editor-only attributes.
+     * Preserves class (FHIR ResourceType) and id (FHIR uuid) on fhir-blot spans.
+     * Converts section blots to semantic HTML sections.
      */
     _buildCompositionHtml(quill) {
         const tempDiv = document.createElement('div');
@@ -181,45 +276,55 @@ const FHIRBundleBuilder = {
 
         const allElements = tempDiv.querySelectorAll('*');
         allElements.forEach(el => {
-            // For FHIR blot elements: keep class (resource type) and id, remove editor attrs
+            // FHIR blot elementy
             if (el.classList.contains('fhir-blot')) {
                 const fhirType = el.getAttribute('data-type');
                 const fhirId = el.getAttribute('data-id');
                 const template = TEMPLATES[fhirType];
                 const resourceType = template ? template.fhirResourceType : 'Observation';
 
-                // Remove ALL attributes first
                 const attrNames = Array.from(el.attributes).map(a => a.name);
                 attrNames.forEach(name => el.removeAttribute(name));
 
-                // Set only the meaningful ones
                 el.setAttribute('class', resourceType);
                 el.setAttribute('id', fhirId);
-            } else {
-                // For non-FHIR elements: strip all potentially problematic attributes
+            }
+            // Section bloty — převod na sémantický HTML
+            else if (el.classList.contains('fhir-section')) {
+                const sType = el.getAttribute('data-section-type');
+                const sectionDef = SECTIONS[sType];
+                
+                if (sectionDef && sType !== 'general') {
+                    const h3 = document.createElement('h3');
+                    h3.textContent = sectionDef.label;
+                    h3.className = 'section-title';
+                    el.replaceWith(h3);
+                } else {
+                    el.remove();
+                }
+            }
+            else {
+                // Non-FHIR elements: clean editor attributes
                 el.removeAttribute('data-id');
                 el.removeAttribute('data-type');
                 el.removeAttribute('data-value');
+                el.removeAttribute('data-section-type');
+                el.removeAttribute('data-section-id');
+                el.removeAttribute('data-section-level');
                 el.removeAttribute('contenteditable');
-                // Keep class/id for standard HTML formatting (ql-indent etc.)
             }
         });
 
-        // Ensure valid XHTML: <br> → <br/>
+        // Remove section controls from output
+        tempDiv.querySelectorAll('.section-controls, .section-header, .section-label').forEach(el => el.remove());
+
         let html = tempDiv.innerHTML.replace(/<br>/g, '<br/>');
         return html;
     },
 
     /**
-     * Import a parsování již existujícího FHIR Bundle souboru zpět do vizuálního editoru.
-     * Zastává funkci "Načíst dokument".
-     *
-     * Celý mechanismus funguje tak, že:
-     * 1. Extrahujeme z Bundle klinický text (z Composition.text.div) a vložíme jej do skrytého divu.
-     * 2. Iterujeme přes všechny Observation zdroje v dokumentu a snažíme se na základě LOINC
-     *    kódů zjistit, ke které naší šabloně (z FHIRTemplates.js) měření patří.
-     * 3. Projdeme všechny <span> v klinickém textu, najdeme ty, jejichž ID odpovídá některé Observation,
-     *    a podle příslušné šablony obnovíme třídu `fhir-blot` a datové atributy nutné k editaci.
+     * Import FHIR Bundle zpět do vizuálního editoru.
+     * Rekonstruuje sekce i FHIR bloty.
      */
     importBundle(quill, bundleJson) {
         const bundle = typeof bundleJson === 'string' ? JSON.parse(bundleJson) : bundleJson;
@@ -232,18 +337,16 @@ const FHIRBundleBuilder = {
             throw new Error('Nenalezen platný Composition text ve FHIR Bundle.');
         }
 
-        // Build a map of resource id → { type key, value }
+        // Build map: resource id → { template key, value }
         const resourceMap = {};
         bundle.entry?.forEach(entry => {
             const res = entry.resource;
             if (!res || res.resourceType !== 'Observation') return;
 
-            // Find which template matches this resource (by LOINC code)
             for (const [key, tmpl] of Object.entries(TEMPLATES)) {
                 const resCoding = res.code?.coding?.[0];
                 const tmplCoding = tmpl.buildResource('test', '1', '2000-01-01').code?.coding?.[0];
                 if (resCoding && tmplCoding && resCoding.code === tmplCoding.code) {
-                    // Extract value
                     let value = '';
                     if (key === 'bp') {
                         const sys = res.component?.[0]?.valueQuantity?.value;
@@ -262,11 +365,10 @@ const FHIRBundleBuilder = {
         let rawHtml = composition.text.div;
         rawHtml = rawHtml.replace(/^<div xmlns="http:\/\/www\.w3\.org\/1999\/xhtml">/, '').replace(/<\/div>$/, '');
 
-        // Restore fhir-blot attributes from resourceMap
+        // Restore fhir-blot attributes
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawHtml;
 
-        // Find elements whose class matches a FHIR resource type (Observation etc.)
         const resourceTypeNames = new Set(Object.values(TEMPLATES).map(t => t.fhirResourceType));
 
         tempDiv.querySelectorAll('*').forEach(el => {
@@ -275,14 +377,12 @@ const FHIRBundleBuilder = {
 
             if (matchedType && el.id && resourceMap[el.id]) {
                 const info = resourceMap[el.id];
-                // Reconstruct fhir-blot
                 el.setAttribute('class', `fhir-blot ${matchedType}${!info.value ? ' empty' : ''}`);
                 el.setAttribute('data-id', el.id);
                 el.setAttribute('data-type', info.templateKey);
                 el.setAttribute('data-value', info.value);
                 el.setAttribute('contenteditable', 'false');
 
-                // Re-render display
                 const tmpl = TEMPLATES[info.templateKey];
                 if (tmpl) {
                     el.innerHTML = tmpl.formatDisplay(info.value);
@@ -290,7 +390,91 @@ const FHIRBundleBuilder = {
             }
         });
 
+        // Rekonstrukce sekcí z Composition.section
+        if (composition.section) {
+            this._reconstructSections(tempDiv, composition.section, 0);
+        }
+
         quill.root.innerHTML = tempDiv.innerHTML;
+    },
+
+    /**
+     * Rekonstruuje SectionBlot elementy z Composition.section stromu.
+     * Vkládá section dividers na začátek obsahu.
+     */
+    _reconstructSections(containerDiv, sections, level) {
+        if (!sections || sections.length === 0) return;
+
+        sections.forEach(sec => {
+            // Najdeme odpovídající definici sekce dle LOINC kódu
+            const sectionCode = sec.code?.coding?.[0]?.code;
+            let sectionDef = null;
+            let sectionKey = null;
+            
+            for (const [key, def] of Object.entries(SECTIONS)) {
+                if (def.code.code === sectionCode) {
+                    sectionDef = def;
+                    sectionKey = key;
+                    break;
+                }
+            }
+
+            if (sectionDef && sectionKey !== 'general') {
+                const sectionId = crypto.randomUUID();
+                const sectionDiv = document.createElement('div');
+                sectionDiv.className = 'fhir-section';
+                sectionDiv.setAttribute('data-section-type', sectionKey);
+                sectionDiv.setAttribute('data-section-id', sectionId);
+                sectionDiv.setAttribute('data-section-level', level);
+                sectionDiv.setAttribute('contenteditable', 'false');
+
+                if (sectionDef.color !== 'transparent') {
+                    sectionDiv.style.backgroundColor = sectionDef.color;
+                    sectionDiv.style.borderColor = sectionDef.borderColor;
+                } else {
+                    sectionDiv.classList.add('section-general');
+                }
+                if (level > 0) {
+                    sectionDiv.style.marginLeft = `${level * 20}px`;
+                }
+
+                sectionDiv.innerHTML = `
+                    <div class="section-header">
+                        <span class="section-label">
+                            <i class="fa-solid ${sectionDef.icon}"></i> ${sectionDef.label}
+                        </span>
+                        <span class="section-controls">
+                            <button class="section-btn" data-action="change" title="Změnit typ sekce">
+                                <i class="fa-solid fa-right-left"></i>
+                            </button>
+                            <button class="section-btn" data-action="unlink" title="Zrušit sekci (ponechat obsah)">
+                                <i class="fa-solid fa-link-slash"></i>
+                            </button>
+                            <button class="section-btn section-btn-danger" data-action="delete" title="Odstranit sekci včetně obsahu">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </span>
+                    </div>`;
+
+                // Remove any <h3 class="section-title"> that was generated during export
+                const h3s = containerDiv.querySelectorAll('h3.section-title');
+                for (const h3 of h3s) {
+                    if (h3.textContent.trim() === sectionDef.label) {
+                        h3.replaceWith(sectionDiv);
+                        break;
+                    }
+                }
+                // If h3 wasn't found, prepend section div
+                if (!sectionDiv.parentNode) {
+                    containerDiv.appendChild(sectionDiv);
+                }
+            }
+
+            // Rekurzivně zpracovat vnořené sekce
+            if (sec.section) {
+                this._reconstructSections(containerDiv, sec.section, level + 1);
+            }
+        });
     },
 
     /**

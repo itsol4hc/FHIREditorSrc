@@ -28,10 +28,10 @@ const FHIRBundleBuilder = {
         const compositionId = crypto.randomUUID();
 
         // --- 1. Generování HTML obsahu ---
-        const compositionHtml = this._buildCompositionHtml(quill);
+        const { fullHtml: compositionHtml, sectionsHtmlMap } = this._buildCompositionHtml(quill);
 
         // --- 2. Analýza sekcí a resources v editoru ---
-        const sectionTree = this._buildSectionTree(quill, currentTime);
+        const sectionTree = this._buildSectionTree(quill, currentTime, sectionsHtmlMap);
 
         // --- 3. Sestavení Composition ---
         const compositionResource = {
@@ -116,7 +116,7 @@ const FHIRBundleBuilder = {
      * 
      * @returns {{ sections: object[], allResources: object[] }}
      */
-    _buildSectionTree(quill, currentTime) {
+    _buildSectionTree(quill, currentTime, sectionsHtmlMap = {}) {
         const delta = quill.getContents();
         const allResources = [];
         
@@ -137,7 +137,10 @@ const FHIRBundleBuilder = {
 
                 const level = parseInt(secData.level) || 0;
 
+                const secId = secData.id || crypto.randomUUID();
+                
                 const fhirSection = {
+                    id: secId, // Unikátní identifikátor sekce
                     title: sectionDef.label,
                     code: {
                         coding: [sectionDef.code],
@@ -145,7 +148,7 @@ const FHIRBundleBuilder = {
                     },
                     text: {
                         status: "generated",
-                        div: `<div xmlns="http://www.w3.org/1999/xhtml">${sectionDef.description}</div>`
+                        div: sectionsHtmlMap[secId] || `<div xmlns="http://www.w3.org/1999/xhtml">${sectionDef.description}</div>`
                     },
                     entry: [],
                     section: [], // Pro zanořené sekce
@@ -274,9 +277,9 @@ const FHIRBundleBuilder = {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = quill.root.innerHTML.replace(/\uFEFF/g, '');
 
+        // 1. Ošetřit všechny FHIR bloty (vložené resources)
         const allElements = tempDiv.querySelectorAll('*');
         allElements.forEach(el => {
-            // FHIR blot elementy
             if (el.classList.contains('fhir-blot')) {
                 const fhirType = el.getAttribute('data-type');
                 const fhirId = el.getAttribute('data-id');
@@ -289,37 +292,61 @@ const FHIRBundleBuilder = {
                 el.setAttribute('class', resourceType);
                 el.setAttribute('id', fhirId);
             }
-            // Section bloty — převod na sémantický HTML
-            else if (el.classList.contains('fhir-section')) {
-                const sType = el.getAttribute('data-section-type');
+        });
+
+        // Odebrat UI prvky sekcí před sémantickým převodem
+        tempDiv.querySelectorAll('.section-controls, .section-header, .section-label').forEach(el => el.remove());
+
+        // FHIR Narrative (txt-1 constraint) umožňuje pouze základní HTML formátování.
+        // Atributy jako contenteditable nebo title na mimospecifických tazích vyhazují chybu.
+        tempDiv.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+        tempDiv.querySelectorAll('[title]').forEach(el => el.removeAttribute('title')); // FHIR Narrative neumožňuje volný title na všech tazích
+
+        // 2. Převést plochou Quill strukturu na sémantické bloky <div>
+        const semanticDiv = document.createElement('div');
+        let currentSectionContainer = semanticDiv; // Výchozí kontejner pro non-section obsah
+
+        Array.from(tempDiv.childNodes).forEach(node => {
+            if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('fhir-section')) {
+                const sType = node.getAttribute('data-section-type');
+                const sId = node.getAttribute('data-section-id');
                 const sectionDef = SECTIONS[sType];
                 
                 if (sectionDef && sType !== 'general') {
+                    // Vytvořit nový obalující div pro sekci
+                    const wrapper = document.createElement('div');
+                    wrapper.className = `section-block section-${sType}`;
+                    if (sId) wrapper.id = sId;
+                    
+                    // Přidat sémantický nadpis
                     const h3 = document.createElement('h3');
                     h3.textContent = sectionDef.label;
                     h3.className = 'section-title';
-                    el.replaceWith(h3);
+                    wrapper.appendChild(h3);
+                    
+                    semanticDiv.appendChild(wrapper);
+                    currentSectionContainer = wrapper; // Všechny další elementy půjdou sem
                 } else {
-                    el.remove();
+                    // General sekce funguje jako reset zpět do root úrovně (mimo blok)
+                    currentSectionContainer = semanticDiv;
                 }
-            }
-            else {
-                // Non-FHIR elements: clean editor attributes
-                el.removeAttribute('data-id');
-                el.removeAttribute('data-type');
-                el.removeAttribute('data-value');
-                el.removeAttribute('data-section-type');
-                el.removeAttribute('data-section-id');
-                el.removeAttribute('data-section-level');
-                el.removeAttribute('contenteditable');
+            } else {
+                // Není to section blot marker, vložíme obsah do aktuálního kontejneru
+                currentSectionContainer.appendChild(node.cloneNode(true));
             }
         });
 
-        // Remove section controls from output
-        tempDiv.querySelectorAll('.section-controls, .section-header, .section-label').forEach(el => el.remove());
+        // Získat HTML obsah specifiký pro každou sémantickou sekci
+        const sectionsHtmlMap = {};
+        Array.from(semanticDiv.childNodes).forEach(child => {
+            if (child.nodeType === Node.ELEMENT_NODE && child.classList.contains('section-block') && child.id) {
+                // Uložíme HTML sekce pro použití v _buildSectionTree
+                sectionsHtmlMap[child.id] = `<div xmlns="http://www.w3.org/1999/xhtml">${child.innerHTML.replace(/<br>/g, '<br/>')}</div>`;
+            }
+        });
 
-        let html = tempDiv.innerHTML.replace(/<br>/g, '<br/>');
-        return html;
+        let html = semanticDiv.innerHTML.replace(/<br>/g, '<br/>');
+        return { fullHtml: html, sectionsHtmlMap };
     },
 
     /**
@@ -337,10 +364,11 @@ const FHIRBundleBuilder = {
             throw new Error('Nenalezen platný Composition text ve FHIR Bundle.');
         }
 
-        // Build map: resource id → { template key, value }
+        // 1. Získat hodnoty resources (Map)
         const resourceMap = {};
         bundle.entry?.forEach(entry => {
             const res = entry.resource;
+            // ... logiku na hledání resources ponecháme ...
             if (!res || res.resourceType !== 'Observation') return;
 
             for (const [key, tmpl] of Object.entries(TEMPLATES)) {
@@ -361,17 +389,62 @@ const FHIRBundleBuilder = {
             }
         });
 
-        // Parse composition HTML
+        // 2. Extrahovat HTML kód složenky
         let rawHtml = composition.text.div;
         rawHtml = rawHtml.replace(/^<div xmlns="http:\/\/www\.w3\.org\/1999\/xhtml">/, '').replace(/<\/div>$/, '');
-
-        // Restore fhir-blot attributes
+        
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = rawHtml;
+        
+        const flatDiv = document.createElement('div');
 
+        // 3. Rozbalit (splaštit) sémantické <div> bloky zpět na plochou Quill strukturu
+        Array.from(tempDiv.childNodes).forEach(node => {
+            let handledAsSection = false;
+            
+            if (node.nodeType === Node.ELEMENT_NODE && node.className && typeof node.className === 'string') {
+                const classList = Array.from(node.classList);
+                const sectionClass = classList.find(c => c.startsWith('section-') && c !== 'section-title' && c !== 'section-block');
+                
+                if (sectionClass) {
+                    const sType = sectionClass.replace('section-', '');
+                    if (SECTIONS[sType]) {
+                        handledAsSection = true;
+                        
+                        // Vložit marker (SectionBlot div)
+                        const marker = document.createElement('div');
+                        marker.className = 'fhir-section';
+                        marker.setAttribute('data-section-type', sType);
+                        marker.setAttribute('data-section-id', node.id || crypto.randomUUID());
+                        marker.setAttribute('data-section-level', '0');
+                        marker.setAttribute('contenteditable', 'false');
+                        flatDiv.appendChild(marker);
+                        
+                        // Vyklopit obsah sekce, ale přeskočit h3 hlavičku
+                        Array.from(node.childNodes).forEach(child => {
+                            if (child.nodeType === Node.ELEMENT_NODE && child.classList.contains('section-title')) return;
+                            flatDiv.appendChild(child.cloneNode(true));
+                        });
+                        
+                        // Po sekci přidáme general oddělovač, aby její CSS border byl ukončen
+                        const generalMarker = document.createElement('div');
+                        generalMarker.className = 'fhir-section';
+                        generalMarker.setAttribute('data-section-type', 'general');
+                        generalMarker.setAttribute('data-section-level', '0');
+                        generalMarker.setAttribute('contenteditable', 'false');
+                        flatDiv.appendChild(generalMarker);
+                    }
+                }
+            }
+            
+            if (!handledAsSection) {
+                flatDiv.appendChild(node.cloneNode(true));
+            }
+        });
+
+        // 4. Obnovit fhir-blot atributy pro resources
         const resourceTypeNames = new Set(Object.values(TEMPLATES).map(t => t.fhirResourceType));
-
-        tempDiv.querySelectorAll('*').forEach(el => {
+        flatDiv.querySelectorAll('*').forEach(el => {
             const classList = Array.from(el.classList);
             const matchedType = classList.find(c => resourceTypeNames.has(c));
 
@@ -384,97 +457,13 @@ const FHIRBundleBuilder = {
                 el.setAttribute('contenteditable', 'false');
 
                 const tmpl = TEMPLATES[info.templateKey];
-                if (tmpl) {
-                    el.innerHTML = tmpl.formatDisplay(info.value);
-                }
+                if (tmpl) el.innerHTML = tmpl.formatDisplay(info.value);
             }
         });
 
-        // Rekonstrukce sekcí z Composition.section
-        if (composition.section) {
-            this._reconstructSections(tempDiv, composition.section, 0);
-        }
-
-        quill.root.innerHTML = tempDiv.innerHTML;
-    },
-
-    /**
-     * Rekonstruuje SectionBlot elementy z Composition.section stromu.
-     * Vkládá section dividers na začátek obsahu.
-     */
-    _reconstructSections(containerDiv, sections, level) {
-        if (!sections || sections.length === 0) return;
-
-        sections.forEach(sec => {
-            // Najdeme odpovídající definici sekce dle LOINC kódu
-            const sectionCode = sec.code?.coding?.[0]?.code;
-            let sectionDef = null;
-            let sectionKey = null;
-            
-            for (const [key, def] of Object.entries(SECTIONS)) {
-                if (def.code.code === sectionCode) {
-                    sectionDef = def;
-                    sectionKey = key;
-                    break;
-                }
-            }
-
-            if (sectionDef && sectionKey !== 'general') {
-                const sectionId = crypto.randomUUID();
-                const sectionDiv = document.createElement('div');
-                sectionDiv.className = 'fhir-section';
-                sectionDiv.setAttribute('data-section-type', sectionKey);
-                sectionDiv.setAttribute('data-section-id', sectionId);
-                sectionDiv.setAttribute('data-section-level', level);
-                sectionDiv.setAttribute('contenteditable', 'false');
-
-                if (sectionDef.color !== 'transparent') {
-                    sectionDiv.style.backgroundColor = sectionDef.color;
-                    sectionDiv.style.borderColor = sectionDef.borderColor;
-                } else {
-                    sectionDiv.classList.add('section-general');
-                }
-                if (level > 0) {
-                    sectionDiv.style.marginLeft = `${level * 20}px`;
-                }
-
-                sectionDiv.innerHTML = `
-                    <div class="section-header">
-                        <span class="section-label">
-                            <i class="fa-solid ${sectionDef.icon}"></i> ${sectionDef.label}
-                        </span>
-                        <span class="section-controls">
-                            <button class="section-btn" data-action="change" title="Změnit typ sekce">
-                                <i class="fa-solid fa-right-left"></i>
-                            </button>
-                            <button class="section-btn" data-action="unlink" title="Zrušit sekci (ponechat obsah)">
-                                <i class="fa-solid fa-link-slash"></i>
-                            </button>
-                            <button class="section-btn section-btn-danger" data-action="delete" title="Odstranit sekci včetně obsahu">
-                                <i class="fa-solid fa-trash-can"></i>
-                            </button>
-                        </span>
-                    </div>`;
-
-                // Remove any <h3 class="section-title"> that was generated during export
-                const h3s = containerDiv.querySelectorAll('h3.section-title');
-                for (const h3 of h3s) {
-                    if (h3.textContent.trim() === sectionDef.label) {
-                        h3.replaceWith(sectionDiv);
-                        break;
-                    }
-                }
-                // If h3 wasn't found, prepend section div
-                if (!sectionDiv.parentNode) {
-                    containerDiv.appendChild(sectionDiv);
-                }
-            }
-
-            // Rekurzivně zpracovat vnořené sekce
-            if (sec.section) {
-                this._reconstructSections(containerDiv, sec.section, level + 1);
-            }
-        });
+        // 5. Načíst do Quillu (quill.clipboard.convert spustí korektně SectionBlot.create pro všechny markery automaticky!)
+        const delta = quill.clipboard.convert({ html: flatDiv.innerHTML });
+        quill.setContents(delta, 'api');
     },
 
     /**

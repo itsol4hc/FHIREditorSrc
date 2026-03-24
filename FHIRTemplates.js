@@ -568,22 +568,22 @@ const SECTIONS = {
     },
 
     /**
-     * Terapie / léčba.
+     * Výkony / Provedené léčebné úkony.
      * Budoucí resources: Procedure, MedicationRequest, MedicationAdministration
      */
     therapy: {
         id: 'therapy',
-        label: 'Terapie',
-        icon: 'fa-pills',
-        keywords: ['terapie', 'léčba', 'lecba'],
+        label: 'Výkony',
+        icon: 'fa-syringe',
+        keywords: ['terapie', 'výkony', 'vykony'],
         color: '#fef3c7',
         borderColor: '#fbbf24',
         allowedResources: [],
         allowedChildren: [],
         allowSameTypeChild: false,
         showInList: true,
-        code: { system: 'http://loinc.org', code: '18776-5', display: 'Plan of treatment' },
-        description: 'Terapie — budoucí: Procedure, MedicationRequest, MedicationAdministration'
+        code: { "system": "http://loinc.org", "code": "29554-3", "display": "Procedure Narrative" },
+        description: 'Provedené výkony — budoucí: Procedure, MedicationRequest, MedicationAdministration'
     },
 
     /**
@@ -601,7 +601,7 @@ const SECTIONS = {
         allowedChildren: [],
         allowSameTypeChild: false,
         showInList: true,
-        code: { system: 'http://loinc.org', code: '55110-1', display: 'Conclusions' },
+        code: { system: 'http://loinc.org', code: '55110-1', display: 'Conclusions [Interpretation] Document' },
         description: 'Závěr — budoucí: Condition, ClinicalImpression'
     },
 

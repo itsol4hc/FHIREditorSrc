@@ -15,7 +15,7 @@ Základním stavebním kamenem FHIRu jsou tzv. **Zdroje (Resources)**. Každý R
 - **`Practitioner`**: Údaje o lékaři (Kdo záznam pořídil).
 - **`Organization`**: Organizace (Nemocnice, oddělení).
 - **`Observation`**: Klinické pozorování či měření (Tělesná teplota, krevní tlak, tep, atd.). Těchto objektů generujeme v editoru nejvíce.
-- **`Composition`**: Samotný "Klinický dokument" – např. lékařská zpráva. Odkazuje se na pacienta, lékaře, obsahuje prostý text zprávy a má odkazy na konkrétní položky (`Observation`).
+- **`Composition`**: Samotný "Klinický dokument" – např. lékařská zpráva. Odkazuje se na pacienta, lékaře a obsahuje prostý text zprávy. Kromě toho strukturuje data do logických bloků zvaných **sekce (`Composition.section`)**, přes které odkazuje na konkrétní naměřené položky (`Observation`).
 - **`Bundle`**: "Balíček", který všechny výše zmíněné Zdroje spojuje dohromady do jednoho velkého JSON souboru, aby se daly bezpečně odeslat přes síť. Typ Bundle, který používáme, se jmenuje `document`.
 
 ---
@@ -43,10 +43,11 @@ Tento soubor definuje převodní pravidla. Říká: *"Když editor zaznamená vl
 
 ### C. Generování výsledného dokumentu (`FHIRBundleBuilder.js`)
 Ve chvíli, kdy kliknete na *"Uložit"*, spustí se Builder:
-1. Vygeneruje hlavičku správy (`Composition`).
-2. Projde celý editor a přeloží všechny `<span>` tagy zpět na HTML text bez "špionážních" atributů. Tento čistý HTML text vloží do vygenerované hlavičky.
-3. Posbírá všechny interaktivní tagy (podle `data-type` a `data-value`), prožene je přes `FHIRTemplates.js` a vygeneruje plnohodnotné zdroje `Observation`.
-4. Všechno to vezme, přidruží (mockovaného) pacienta a lékaře, obalí to do obřího JSON `Bundle` ohlásí hotovo.
+1. Vygeneruje hlavičku správy (`Composition`). Ta obsahuje základní metadata a definuje si datovou sekci pro měření (např. "Vitální funkce" reprezentovanou jako `Composition.section`).
+2. Projde celý editor a přeloží všechny `<span>` tagy zpět na HTML text bez "špionážních" atributů. Tento čistý HTML text bezpečně vloží přímo do vygenerované hlavičky (konkrétně do pole `Composition.text.div`).
+3. Dále posbírá všechny interaktivní tagy (podle `data-type` a `data-value`), prožene je přes `FHIRTemplates.js` a pro každou vloženou hodnotu vygeneruje plnohodnotný zdroj `Observation`.
+4. Aby FHIR dokument držel pohromadě, ke každé vygenerované `Observation` vytvoří unikátní odkaz (referenci) a přidá ji právě do připravené sekce dokumentu (`Composition.section[0].entry`). Tím je jasně dáno, že měření patří do tohoto dokumentu.
+5. Nakonec vše vezme, přidruží (mockovaného) pacienta a lékaře, a celou tuto sadu zabalí do obřího JSON `Bundle` typu dokument. Hotovo.
 
 Tento Bundle se dá pak jednoduše kdykoliv naparsovat zpět, stáhnout, či odeslat do nemocničního systému.
 

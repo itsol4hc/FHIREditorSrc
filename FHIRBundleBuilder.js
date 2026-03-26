@@ -1,15 +1,15 @@
 /**
  * FHIRBundleBuilder.js
- * Převod dat mezi vizuálním textovým editorem (Quill) a FHIR Document Bundle.
+ * Conversion of data between the visual text editor (Quill) and a FHIR Document Bundle.
  * 
- * Co je to FHIR Document Bundle:
- * Představuje ucelený "Klinický dokument" (např. zpráva z vyšetření).
- * Skládá se z několika položek (entries):
- * 1. Composition - Hlavička dokumentu + HTML text + sekce (section).
- * 2. Patient - Údaje o pacientovi.
- * 3. Practitioner - Údaje o lékaři.
- * 4. Organization - Údaje o nemocnici.
- * 5. Observation(s) - Samotné záznamy (tlak, tep...), na které se sekce odkazují.
+ * What is a FHIR Document Bundle:
+ * Represents a complete "Clinical Document" (e.g., an examination report).
+ * It consists of several entries:
+ * 1. Composition - Document header + HTML text + sections.
+ * 2. Patient - Patient data.
+ * 3. Practitioner - Doctor's data.
+ * 4. Organization - Hospital/Clinic data.
+ * 5. Observation(s) - The actual recorded values (blood pressure, pulse, etc.) that the sections reference.
  *
  * Dependencies: mockPatient.js, mockHealthCareProvider.js, FHIRTemplates.js
  */
@@ -17,23 +17,23 @@
 const FHIRBundleBuilder = {
 
     /**
-     * Sestaví kompletní FHIR Document Bundle z aktuálního obsahu editoru.
-     * Dynamicky generuje Composition.section[] na základě SectionBlot elementů.
+     * Builds a complete FHIR Document Bundle from the current editor content.
+     * Dynamically generates Composition.section[] based on SectionBlot elements.
      * 
-     * @param {Quill} quill - Instance Quill editoru
-     * @returns {object} FHIR Bundle ve formátu JSON objektu
+     * @param {Quill} quill - Quill editor instance
+     * @returns {object} FHIR Bundle in JSON format
      */
     buildBundle(quill) {
         const currentTime = new Date().toISOString();
         const compositionId = crypto.randomUUID();
 
-        // --- 1. Generování HTML obsahu ---
+        // --- 1. HTML content generation ---
         const { fullHtml: compositionHtml, sectionsHtmlMap } = this._buildCompositionHtml(quill);
 
-        // --- 2. Analýza sekcí a resources v editoru ---
+        // --- 2. Editor section and resource parsing ---
         const sectionTree = this._buildSectionTree(quill, currentTime, sectionsHtmlMap);
 
-        // --- 3. Sestavení Composition ---
+        // --- 3. Composition construction ---
         const compositionResource = {
             resourceType: "Composition",
             id: compositionId,
@@ -61,12 +61,12 @@ const FHIRBundleBuilder = {
             section: sectionTree.sections
         };
 
-        // Pokud nejsou žádné sekce, odstraníme prázdný array
+        // If there are no sections, remove the empty array
         if (compositionResource.section.length === 0) {
             delete compositionResource.section;
         }
 
-        // --- 4. Sestavení Bundle ---
+        // --- 4. Bundle construction ---
         const fhirBundle = {
             resourceType: "Bundle",
             id: crypto.randomUUID(),
@@ -99,7 +99,7 @@ const FHIRBundleBuilder = {
             ]
         };
 
-        // Přidáme všechny resource entries do Bundle
+        // Add all resource entries to the Bundle
         sectionTree.allResources.forEach(res => {
             fhirBundle.entry.push({
                 fullUrl: res.fullUrl,
@@ -111,8 +111,8 @@ const FHIRBundleBuilder = {
     },
 
     /**
-     * Analyzuje editor a vytvoří strom sekcí s přiřazenými resources.
-     * Prochází Delta operace hledá section a resource embedy.
+     * Parses the editor layout and creates a section tree with assigned resources.
+     * Iterates through Delta operations to find section and resource embeds.
      * 
      * @returns {{ sections: object[], allResources: object[] }}
      */
@@ -120,16 +120,16 @@ const FHIRBundleBuilder = {
         const delta = quill.getContents();
         const allResources = [];
         
-        // Stav: seznam sekcí a aktuální zásobník pro zanořování
+        // State: list of sections and current nesting stack
         const rootSections = [];
-        const sectionStack = []; // Stack pro tracking aktuální sekce (pro nesting)
-        let currentSectionEntries = []; // Entries pro aktuální sekci (nebo root)
+        const sectionStack = []; // Stack for tracking current section (for nesting)
+        let currentSectionEntries = []; // Entries for current section (or root)
 
-        // Projdeme všechny delta operace
+        // Iterate through all delta operations
         delta.ops.forEach(op => {
             if (!op.insert || typeof op.insert !== 'object') return;
 
-            // Nalezena sekce
+            // Section found
             if (op.insert['fhir-section']) {
                 const secData = op.insert['fhir-section'];
                 const sectionDef = SECTIONS[secData.sectionType];
@@ -140,7 +140,7 @@ const FHIRBundleBuilder = {
                 const secId = secData.id || crypto.randomUUID();
                 
                 const fhirSection = {
-                    id: secId, // Unikátní identifikátor sekce
+                    id: secId, // Unique section identifier
                     title: sectionDef.label,
                     code: {
                         coding: [sectionDef.code],
@@ -151,15 +151,15 @@ const FHIRBundleBuilder = {
                         div: sectionsHtmlMap[secId] || `<div xmlns="http://www.w3.org/1999/xhtml">${sectionDef.description}</div>`
                     },
                     entry: [],
-                    section: [], // Pro zanořené sekce
-                    _level: level // Interní atribut, odstraníme před exportem
+                    section: [], // For nested sections
+                    _level: level // Internal attribute, removed before export
                 };
 
-                // Zařazení sekce do stromu dle level
+                // Attaching the section into the tree based on level
                 if (level === 0) {
-                    // Přidáme předchozí "volné" entries do výchozí sekce pokud existují
+                    // Add previous "free" entries to the default section if they exist
                     if (currentSectionEntries.length > 0 && sectionStack.length === 0) {
-                        // Resources bez sekce — vytvoříme implicitní top-level sekci
+                        // Resources without a section — create an implicit top-level section
                         rootSections.push(this._createDefaultSection(currentSectionEntries));
                         currentSectionEntries = [];
                     }
@@ -168,7 +168,7 @@ const FHIRBundleBuilder = {
                     sectionStack.push(fhirSection);
                     currentSectionEntries = fhirSection.entry;
                 } else {
-                    // Zanořená sekce: hledáme rodiče dle level
+                    // Nested section: search for parent based on level
                     while (sectionStack.length > 0 && sectionStack[sectionStack.length - 1]._level >= level) {
                         sectionStack.pop();
                     }
@@ -183,7 +183,7 @@ const FHIRBundleBuilder = {
                 }
             }
 
-            // Nalezen resource (FHIR blot)
+            // Resource found (FHIR blot)
             if (op.insert['fhir-resource']) {
                 const resData = op.insert['fhir-resource'];
                 const tmpl = TEMPLATES[resData.type];
@@ -196,27 +196,27 @@ const FHIRBundleBuilder = {
                     div: `<div xmlns="http://www.w3.org/1999/xhtml">${tmpl.formatDisplay(resData.value)}</div>`
                 };
 
-                // Přidáme referenci do aktuální sekce
+                // Add reference to the current section
                 currentSectionEntries.push({ reference: resourceUrl });
 
-                // Přidáme resource do globálního seznamu pro Bundle entries
+                // Add resource to the global list for Bundle entries
                 allResources.push({ fullUrl: resourceUrl, resource: resource });
             }
         });
 
-        // Zbylé volné resources (po poslední sekci nebo bez sekce vůbec)
+        // Remaining unassigned resources (after the last section or no sections at all)
         if (currentSectionEntries.length > 0 && sectionStack.length === 0 && currentSectionEntries !== rootSections[rootSections.length - 1]?.entry) {
             rootSections.push(this._createDefaultSection(currentSectionEntries));
         }
 
-        // Vyčistíme interní atributy a prázdné arrays
+        // Clean internal attributes and empty arrays
         this._cleanSectionTree(rootSections);
 
         return { sections: rootSections, allResources };
     },
 
     /**
-     * Vytvoří výchozí FHIR sekci pro resources bez přiřazené sekce.
+     * Creates a default FHIR section for resources without an assigned section.
      */
     _createDefaultSection(entries) {
         return {
@@ -238,13 +238,13 @@ const FHIRBundleBuilder = {
     },
 
     /**
-     * Vyčistí strom sekcí — odstraní interní atributy a prázdné arrays.
+     * Cleans the section tree — removes internal attributes and empty arrays.
      */
     _cleanSectionTree(sections) {
         sections.forEach(sec => {
             delete sec._level;
             
-            // FHIR nedovoluje prázdné arrays
+            // FHIR does not allow empty arrays
             if (sec.entry && sec.entry.length === 0) {
                 delete sec.entry;
             }
@@ -254,7 +254,7 @@ const FHIRBundleBuilder = {
                 this._cleanSectionTree(sec.section);
             }
             
-            // Pokud nemá entry ani section, přidáme emptyReason
+            // If there's neither an entry nor section, append emptyReason
             if (!sec.entry && !sec.section) {
                 sec.emptyReason = {
                     coding: [{
@@ -277,7 +277,7 @@ const FHIRBundleBuilder = {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = quill.root.innerHTML.replace(/\uFEFF/g, '');
 
-        // 1. Ošetřit všechny FHIR bloty (vložené resources)
+        // 1. Process all FHIR blots (embedded resources)
         const allElements = tempDiv.querySelectorAll('*');
         allElements.forEach(el => {
             if (el.classList.contains('fhir-blot')) {
@@ -294,17 +294,17 @@ const FHIRBundleBuilder = {
             }
         });
 
-        // Odebrat UI prvky sekcí před sémantickým převodem
+        // Remove UI section elements prior to semantic conversion
         tempDiv.querySelectorAll('.section-controls, .section-header, .section-label').forEach(el => el.remove());
 
-        // FHIR Narrative (txt-1 constraint) umožňuje pouze základní HTML formátování.
-        // Atributy jako contenteditable nebo title na mimospecifických tazích vyhazují chybu.
+        // FHIR Narrative (txt-1 constraint) allows only basic HTML formatting.
+        // Attributes like contenteditable or title on non-specific tags result in errors.
         tempDiv.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-        tempDiv.querySelectorAll('[title]').forEach(el => el.removeAttribute('title')); // FHIR Narrative neumožňuje volný title na všech tazích
+        tempDiv.querySelectorAll('[title]').forEach(el => el.removeAttribute('title')); // FHIR Narrative doesn't allow random titles
 
-        // 2. Převést plochou Quill strukturu na sémantické bloky <div>
+        // 2. Convert flat Quill structure to semantic <div> blocks
         const semanticDiv = document.createElement('div');
-        let currentSectionContainer = semanticDiv; // Výchozí kontejner pro non-section obsah
+        let currentSectionContainer = semanticDiv; // Default container for non-section content
 
         Array.from(tempDiv.childNodes).forEach(node => {
             if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('fhir-section')) {
@@ -313,34 +313,34 @@ const FHIRBundleBuilder = {
                 const sectionDef = SECTIONS[sType];
                 
                 if (sectionDef && sType !== 'general') {
-                    // Vytvořit nový obalující div pro sekci
+                    // Create a new wrapping div for the section
                     const wrapper = document.createElement('div');
                     wrapper.className = `section-block section-${sType}`;
                     if (sId) wrapper.id = sId;
                     
-                    // Přidat sémantický nadpis
+                    // Add a semantic heading
                     const h3 = document.createElement('h3');
                     h3.textContent = sectionDef.label;
                     h3.className = 'section-title';
                     wrapper.appendChild(h3);
                     
                     semanticDiv.appendChild(wrapper);
-                    currentSectionContainer = wrapper; // Všechny další elementy půjdou sem
+                    currentSectionContainer = wrapper; // Future elements will fall into here
                 } else {
-                    // General sekce funguje jako reset zpět do root úrovně (mimo blok)
+                    // General section resets back to the root level (outside the block)
                     currentSectionContainer = semanticDiv;
                 }
             } else {
-                // Není to section blot marker, vložíme obsah do aktuálního kontejneru
+                // Not a section blot marker, insert the content into the current container
                 currentSectionContainer.appendChild(node.cloneNode(true));
             }
         });
 
-        // Získat HTML obsah specifiký pro každou sémantickou sekci
+        // Fetch section-specific HTML content
         const sectionsHtmlMap = {};
         Array.from(semanticDiv.childNodes).forEach(child => {
             if (child.nodeType === Node.ELEMENT_NODE && child.classList.contains('section-block') && child.id) {
-                // Uložíme HTML sekce pro použití v _buildSectionTree
+                // Save the HTML section for use in _buildSectionTree
                 sectionsHtmlMap[child.id] = `<div xmlns="http://www.w3.org/1999/xhtml">${child.innerHTML.replace(/<br>/g, '<br/>')}</div>`;
             }
         });
@@ -350,8 +350,8 @@ const FHIRBundleBuilder = {
     },
 
     /**
-     * Import FHIR Bundle zpět do vizuálního editoru.
-     * Rekonstruuje sekce i FHIR bloty.
+     * Import FHIR Bundle back into the visual editor.
+     * Reconstructs sections and FHIR blots.
      */
     importBundle(quill, bundleJson) {
         const bundle = typeof bundleJson === 'string' ? JSON.parse(bundleJson) : bundleJson;
@@ -364,7 +364,7 @@ const FHIRBundleBuilder = {
             throw new Error('Nenalezen platný Composition text ve FHIR Bundle.');
         }
 
-        // 1. Získat hodnoty resources (Map)
+        // 1. Obtain resource values (Map)
         const resourceMap = {};
         bundle.entry?.forEach(entry => {
             const res = entry.resource;
@@ -389,7 +389,7 @@ const FHIRBundleBuilder = {
             }
         });
 
-        // 2. Extrahovat HTML kód složenky
+        // 2. Extract HTML content of the composition
         let rawHtml = composition.text.div;
         rawHtml = rawHtml.replace(/^<div xmlns="http:\/\/www\.w3\.org\/1999\/xhtml">/, '').replace(/<\/div>$/, '');
         
@@ -398,7 +398,7 @@ const FHIRBundleBuilder = {
         
         const flatDiv = document.createElement('div');
 
-        // 3. Rozbalit (splaštit) sémantické <div> bloky zpět na plochou Quill strukturu
+        // 3. Flatten semantic <div> blocks back into the standard Quill structure
         Array.from(tempDiv.childNodes).forEach(node => {
             let handledAsSection = false;
             
@@ -411,7 +411,7 @@ const FHIRBundleBuilder = {
                     if (SECTIONS[sType]) {
                         handledAsSection = true;
                         
-                        // Vložit marker (SectionBlot div)
+                        // Insert a marker (SectionBlot div)
                         const marker = document.createElement('div');
                         marker.className = 'fhir-section';
                         marker.setAttribute('data-section-type', sType);
@@ -420,13 +420,13 @@ const FHIRBundleBuilder = {
                         marker.setAttribute('contenteditable', 'false');
                         flatDiv.appendChild(marker);
                         
-                        // Vyklopit obsah sekce, ale přeskočit h3 hlavičku
+                        // Copy section contents, skipping the h3 header
                         Array.from(node.childNodes).forEach(child => {
                             if (child.nodeType === Node.ELEMENT_NODE && child.classList.contains('section-title')) return;
                             flatDiv.appendChild(child.cloneNode(true));
                         });
                         
-                        // Po sekci přidáme general oddělovač, aby její CSS border byl ukončen
+                        // Append a 'general' delimiter after the section to reset the UI context correctly
                         const generalMarker = document.createElement('div');
                         generalMarker.className = 'fhir-section';
                         generalMarker.setAttribute('data-section-type', 'general');
@@ -442,7 +442,7 @@ const FHIRBundleBuilder = {
             }
         });
 
-        // 4. Obnovit fhir-blot atributy pro resources
+        // 4. Restore the fhir-blot properties based on the parsed HTML classes
         const resourceTypeNames = new Set(Object.values(TEMPLATES).map(t => t.fhirResourceType));
         flatDiv.querySelectorAll('*').forEach(el => {
             const classList = Array.from(el.classList);
@@ -461,7 +461,7 @@ const FHIRBundleBuilder = {
             }
         });
 
-        // 5. Načíst do Quillu (quill.clipboard.convert spustí korektně SectionBlot.create pro všechny markery automaticky!)
+        // 5. Load the contents back to Quill (quill.clipboard.convert automatically calls SectionBlot.create)
         const delta = quill.clipboard.convert({ html: flatDiv.innerHTML });
         quill.setContents(delta, 'api');
     },

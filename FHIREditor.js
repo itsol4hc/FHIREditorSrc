@@ -1,12 +1,12 @@
 /**
  * FHIREditor.js
- * Hlavní logika FHIR klinického editoru.
+ * Main logic of the FHIR clinical editor.
  *
- * Architektura sekcí:
- * SectionBlot = tenký záhlaví (BlockEmbed = atomický, needitovatelný).
- * Obsah sekce = normální Quill odstavce ZA tímto záhlavím.
- * Po každé změně JS projde DOM a přidá CSS třídy na odstavce
- * "patřící" sekci. Observer se dočasně odpojuje, aby nenarušil Quill.
+ * Section Architecture:
+ * SectionBlot = thin header (BlockEmbed = atomic, non-editable).
+ * Section content = normal Quill paragraphs positioned AFTER this header.
+ * After every change, the JS iterates over the DOM and adds CSS classes to paragraphs
+ * "belonging" to a section. The MutationObserver is temporarily disconnected to avoid conflicts with Quill.
  *
  * Dependencies: Quill.js 2.x, FHIRTemplates.js, FHIRBundleBuilder.js
  */
@@ -50,7 +50,7 @@ FhirBlot.tagName = 'span';
 Quill.register(FhirBlot);
 
 
-// --- SectionBlot: TENKÝ ZÁHLAVÍ ---
+// --- SectionBlot: THIN HEADER ---
 const BlockEmbed = Quill.import('blots/block/embed');
 
 class SectionBlot extends BlockEmbed {
@@ -65,10 +65,10 @@ class SectionBlot extends BlockEmbed {
         node.setAttribute('data-section-level', level);
         node.setAttribute('contenteditable', 'false');
 
-        // Čistý styl: jen pozadí + label, ŽÁDNÉ bordery v editoru
+        // Clean style: background + label only, NO borders in the editor
         const bgColor = sectionDef.color !== 'transparent' ? sectionDef.color : '#f8fafc';
 
-        // general sekce = neviditelný oddělovač (boundary marker pro CSS)
+        // general section = invisible separator (boundary marker for CSS)
         if (data.sectionType === 'general') {
             node.style.cssText = 'display:block;height:0;padding:0;margin:0;border:none;overflow:hidden;line-height:0;font-size:0;';
             node.innerHTML = '';
@@ -131,8 +131,8 @@ const quill = new Quill('#editor-container', {
 
 // ===================================================================
 // 3. Section Content Styling
-//    ČISTĚ CSS přístup: injektujeme <style> tag s nth-child selektory.
-//    NULOVÁ modifikace Quill DOM = žádné konflikty s MutationObserverem.
+//    PURE CSS approach: inject a <style> tag with nth-child selectors.
+//    ZERO modification of the Quill DOM = no conflicts with MutationObserver.
 // ===================================================================
 function updateSectionContentStyling() {
     let styleEl = document.getElementById('section-content-styles');
@@ -152,9 +152,9 @@ function updateSectionContentStyling() {
         if (!def || sType === 'general') continue;
 
         const bg = def.color || 'transparent';
-        const childStart = i + 2; // nth-child je 1-indexed, obsah začíná za headerem
+        const childStart = i + 2; // nth-child is 1-indexed, content starts after header
 
-        // Najít konec: příští sekce nebo konec dětí
+        // Find end: next section or end of children
         let childEnd = children.length;
         for (let j = i + 1; j < children.length; j++) {
             if (children[j].classList.contains('fhir-section')) { childEnd = j; break; }
@@ -168,7 +168,7 @@ function updateSectionContentStyling() {
     styleEl.textContent = rules.join('\n');
 }
 
-// Spustit po každé změně (s debounce) a na startu
+// Trigger after every change (with debounce) and on startup
 let _sectionStyleTimeout = null;
 function scheduleSectionStyling() {
     if (_sectionStyleTimeout) clearTimeout(_sectionStyleTimeout);
@@ -215,7 +215,7 @@ function getCurrentSectionType(index) {
     delta.ops.forEach(op => {
         if (op.insert && typeof op.insert === 'object' && op.insert['fhir-section']) {
             const t = op.insert['fhir-section'].sectionType;
-            // 'general' je neviditelný boundary marker, ne skutečný rodič
+            // 'general' is an invisible boundary marker, not an actual parent
             lastType = (t === 'general') ? null : t;
         }
     });
@@ -226,7 +226,7 @@ function getFilteredTemplates(section) {
     const allTemplates = Object.values(TEMPLATES);
     if (!section || section.allowedResources === undefined || section.allowedResources === null) return allTemplates;
     if (section.allowedResources.includes('*')) return allTemplates;
-    if (section.allowedResources.length === 0) return []; // Sekce nemá žádné povolené resources
+    if (section.allowedResources.length === 0) return []; // Section does not allow any resources
     return allTemplates.filter(t => section.allowedResources.includes(t.fhirResourceType));
 }
 
@@ -361,12 +361,12 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-hei
             onOpen: (ov) => { const f = ov.querySelector('#print-iframe'); if (f) f.srcdoc = reportHtml; }
         });
     },
-    /** Sestaví tiskový obsah: sekce → jen nadpis + barevné podtržení */
+    /** Assembles printable content: sections → just a header + colored underline */
     _buildPrintContent() {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = quill.root.innerHTML;
 
-        // Sekce → decentní nadpis s barevným podtržením
+        // Sections → subtle heading with colored underline
         tempDiv.querySelectorAll('.fhir-section').forEach(secNode => {
             const sType = secNode.getAttribute('data-section-type');
             const def = SECTIONS[sType];
@@ -382,7 +382,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-hei
             }
         });
 
-        // Vyčistit in-section styly
+        // Clear in-section styles
         tempDiv.querySelectorAll('.in-section').forEach(el => {
             el.classList.remove('in-section'); el.removeAttribute('data-in-section'); el.removeAttribute('style');
         });
@@ -522,7 +522,7 @@ const UI = {
 
     execAction(index) {
         const item = this.filteredItems[index]; if (!item) return;
-        // Pokud je to sekce, delegujeme na SectionUI
+        // If it is a section, delegate to SectionUI
         if (item._isSection) { SectionUI.execAction(index); return; }
 
         let insertIndex = this.ctx.insertIndex !== undefined ? this.ctx.insertIndex : (quill.getSelection(true)?.index || 0);
@@ -582,7 +582,7 @@ const SectionUI = {
         const section = UI.filteredItems[index]; if (!section) return;
         let insertIdx = UI.ctx.insertIndex || 0;
 
-        // Změna typu existující sekce
+        // Change an existing section type
         if (UI.ctx._changingSection) {
             const sn = UI.ctx._changingSection;
             const blot = Quill.find(sn); if (!blot) return;
@@ -594,14 +594,14 @@ const SectionUI = {
             return;
         }
 
-        // Smazat psaný výraz (pokud sekce vložena z našeptávače)
+        // Remove written word trigger (if section was inserted via suggestion)
         const wordRange = UI.ctx.wordRange;
         if (wordRange) {
             quill.deleteText(wordRange.index, wordRange.length, 'api');
             insertIdx = wordRange.index;
         }
 
-        // Level dle rodičovské sekce
+        // Derive level from parent section
         let level = 0;
         const parentType = getCurrentSectionType(insertIdx);
         if (parentType) {
@@ -661,15 +661,15 @@ window.addEventListener('keydown', (e) => {
     } else {
         if (e.ctrlKey && e.key === '.') { e.preventDefault(); const section = getCurrentSection(); UI.filteredItems = getFilteredTemplates(section); const r = quill.getSelection(); UI.show('SEARCH', getCursorRect() || quill.container.getBoundingClientRect(), { insertIndex: r ? r.index : 0 }); }
         if (e.key === 'F2') { e.preventDefault(); SectionUI.openSectionSearch(); }
-        // Ctrl+Enter: opustit sekci — vloží neviditelný general oddělovač
+        // Ctrl+Enter: Leave section — inserts an invisible general separator
         if (e.ctrlKey && e.key === 'Enter') {
             e.preventDefault();
             const range = quill.getSelection(); if (!range) return;
             const curType = getCurrentSectionType(range.index);
-            if (!curType || curType === 'general') return; // Není v sekci
+            if (!curType || curType === 'general') return; // Not inside a section
 
             const curIdx = range.index;
-            // Najít pozici: další sekce nebo konec dokumentu
+            // Find position: next section or document end
             const totalLen = quill.getLength();
             const delta = quill.getContents(curIdx, totalLen - curIdx);
             let pos = curIdx;
@@ -677,9 +677,9 @@ window.addEventListener('keydown', (e) => {
                 if (pos > curIdx && op.insert && typeof op.insert === 'object' && op.insert['fhir-section']) break;
                 pos += (typeof op.insert === 'string') ? op.insert.length : 1;
             }
-            // Neviditelný general boundary marker ukončí CSS rozsah sekce
+            // Invisible general boundary marker terminates CSS section scope
             quill.insertEmbed(pos, 'fhir-section', { sectionType: 'general', id: crypto.randomUUID(), level: 0 }, 'api');
-            quill.insertText(pos + 1, '\n', 'api'); // Vytvořit nový odstavec za hranicí
+            quill.insertText(pos + 1, '\n', 'api'); // Create a new paragraph after the boundary
             quill.setSelection(pos + 2, 0);
             scheduleSectionStyling();
             showToast('Sekce ukončena');
@@ -701,10 +701,10 @@ quill.on('text-change', (delta, oldDelta, source) => {
         const word = match[1].toLowerCase();
         const section = getCurrentSection();
 
-        // Hledáme resources
+        // Looking for resources
         const matchedResources = getFilteredTemplates(section).filter(t => t.keywords.some(k => k.startsWith(word)));
 
-        // Hledáme i sekce (jen pokud je povoleno vkládat podsekce)
+        // Looking for sections (only if allowed to nest explicitly)
         const parentType = getCurrentSectionType();
         const availableSections = getAvailableSections(parentType);
         const matchedSections = availableSections.filter(s => s.keywords.some(k => k.startsWith(word))).map(s => ({ ...s, _isSection: true }));

@@ -1,31 +1,31 @@
 /**
  * FHIRTemplates.js
- * Klinické datové šablony pro FHIR zdroje (resources).
+ * Clinical data templates for FHIR resources.
  *
- * TENTO SOUBOR JE HLAVNÍM MÍSTEM PRO PŘIDÁVÁNÍ NOVÝCH TYPŮ ZÁZNAMŮ (ŠABLON).
- * 
- * Co je to FHIR (Fast Healthcare Interoperability Resources):
- * Moderní standard pro výměnu zdravotnických informací. Data jsou reprezentována
- * jako "Zdroje" (Resources) ve formátu JSON. V tomto editoru nejčastěji pracujeme
- * se zdrojem typu `Observation` (Pozorování/Měření - např. krevní tlak, teplota).
+ * THIS FILE IS THE MAIN ENTRY POINT FOR ADDING NEW TYPES OF CLINICAL RECORDS (TEMPLATES).
  *
- * Jak funguje šablona:
- * Každá šablona v objektu `TEMPLATES` definuje:
- * 1. Jak se záznam jmenuje a hledá (label, keywords, icon)
- * 2. Jak se z hodnoty (zadané uživatelem) vytvoří platný FHIR JSON (buildResource)
- * 3. Jak se hodnota zobrazí v textovém editoru (formatDisplay)
- * 4. Jak vypadá zadávací formulář v plovoucím okně (renderInput)
- * 5. Jak se z formuláře získá surová textová hodnota (getValue)
+ * What is FHIR (Fast Healthcare Interoperability Resources):
+ * A modern standard for exchanging healthcare information. Data is represented
+ * as "Resources" in JSON format. In this editor, we primarily work with the
+ * `Observation` resource type (e.g., blood pressure, temperature, etc.).
  *
- * Chcete-li přidat novou šablonu (např. 'Hladina cukru'), zkopírujte existující (např. 'temp'),
- * změňte její klíč ('glucose') a upravte LOINC kódy, jednotky a vzhled ve funkcích.
+ * How a template works:
+ * Each template in the `TEMPLATES` object defines:
+ * 1. Discoverability and name (label, keywords, icon).
+ * 2. How an entered value is transformed into a valid FHIR JSON (buildResource).
+ * 3. How the value is rendered in the text editor (formatDisplay).
+ * 4. The HTML template for the floating entry form (renderInput).
+ * 5. How the raw text value is extracted from the form (getValue).
  *
- * Dependencies: mockPatient.js, mockHealthCareProvider.js (loaded before this file)
+ * If you want to add a new template (e.g., 'Blood Sugar'), copy an existing one (e.g., 'temp'),
+ * change its key ('glucose') and adjust LOINC codes, units, and appearance via the functions.
+ *
+ * Dependencies: mockPatient.js, mockHealthCareProvider.js (must be loaded before this file)
  */
 
 // --- Shared coding constants ---
-// FHIR často vyžaduje kategorizaci zdrojů (např. že tep patří do "Vital Signs").
-// Zde je definována kategorie pro vitální funkce podle platného FHIR standardu.
+// FHIR often requires categorizing resources (e.g., classifying a pulse as "Vital Signs").
+// The vital signs category is configured here according to the current FHIR standard.
 const VITAL_SIGNS_CATEGORY = [{
     coding: [{
         system: "http://terminology.hl7.org/CodeSystem/observation-category",
@@ -34,7 +34,7 @@ const VITAL_SIGNS_CATEGORY = [{
     }]
 }];
 
-// Odkaz na FHIR profil určující předepsanou strukturu pro Observation u vitálních funkcí.
+// Reference to a FHIR profile determining the structure for an Observation resource within vital signs.
 const OBSERVATION_PROFILE_VITALSIGNS = "http://hl7.org/fhir/StructureDefinition/vitalsigns";
 
 // --- Helper: shorthand references from mock data ---
@@ -48,33 +48,33 @@ function getPractitionerRef() {
 
 // --- Template definitions ---
 /**
- * Objekt TEMPLATES obsahuje definice všech podporovaných klinických údajů.
- * Klíč (např. 'bp', 'temp') slouží jako unikátní identifikátor v systému.
+ * The TEMPLATES object contains definitions of all supported clinical data points.
+ * The key (e.g., 'bp', 'temp') serves as a unique identifier within the system.
  */
 const TEMPLATES = {
     'bp': {
-        // id: Unikátní ID šablony (musí odpovídat klíči struktury)
+        // id: Unique template ID (must match the structural key)
         id: 'bp',
-        // label: Název zobrazený uživateli v našeptávači a formuláři
+        // label: UI label shown to the user in the suggestion box and form
         label: 'TK',
-        // icon: Ikona (třída FontAwesome) zobrazená v UI
+        // icon: FontAwesome class icon used in UI rendering
         icon: 'fa-heart-pulse',
-        // keywords: Klíčová slova, podle kterých editor hledá, když uživatel píše text
+        // keywords: Search parameters users can type to pull up this template
         keywords: ['tk', 'tlak', 'krevni tlak', 'krevní tlak'],
-        // fhirResourceType: Typ FHIR zdroje - nejčastěji 'Observation' pro měření
+        // fhirResourceType: The FHIR resource type used. Most often 'Observation'
         fhirResourceType: 'Observation',
         
-        // buildResource: Funkce, která sestaví finální hierarchický FHIR JSON objekt.
-        // Přijímá UUID zdroje ('id'), surovou textovou hodnotu ('value') a čas měření ('time').
+        // buildResource: A function building the final hierarchical FHIR JSON object.
+        // Accepts a resource UUID ('id'), the raw text value ('value'), and the recording time ('time').
         buildResource: (id, value, time) => {
             const vals = (value || '').split('/');
             return {
-                resourceType: "Observation", // Deklarace typu FHIR zdroje
-                id: id,                      // Unikátní UUID v rámci dokumentu
-                meta: { profile: [OBSERVATION_PROFILE_VITALSIGNS] }, // Uvedení platného profilu
-                status: "final",             // Stav - 'final' značí hotový platný záznam
-                category: VITAL_SIGNS_CATEGORY, // Cílová kategorie (vitální funkce)
-                code: {                      // CO SE MĚŘÍ. Typicky specifikováno standardem LOINC
+                resourceType: "Observation", // Declaring the FHIR Resource type
+                id: id,                      // Unique Document UUID
+                meta: { profile: [OBSERVATION_PROFILE_VITALSIGNS] }, // Required valid profile
+                status: "final",             // Status ('final' indicates a completed, valid entry)
+                category: VITAL_SIGNS_CATEGORY, // Target category (vital signs)
+                code: {                      // WHAT is measured. Typically specified by LOINC standard
                     coding: [{
                         system: "http://loinc.org",
                         code: "85354-9",
@@ -82,13 +82,13 @@ const TEMPLATES = {
                     }],
                     text: "Krevní tlak"
                 },
-                subject: getPatientRef(),    // KDO je pacient (Reference na MOCK pacienta)
-                effectiveDateTime: time,     // KDY bylo měření provedeno
-                performer: [getPractitionerRef()], // KDO ho pořídil (Reference na lékaře)
+                subject: getPatientRef(),    // WHO is the patient (MOCK Patient reference)
+                effectiveDateTime: time,     // WHEN the measurement happened
+                performer: [getPractitionerRef()], // WHO performed the measurement (Doctor reference)
                 
-                // Měření může mít buď jednoduchou hodnotu (valueQuantity - viz 'temp' / 'pulse'), 
-                // nebo kompozitní hodnotu skládající se z více prvků. Tlak se skládá ze systoly a diastoly, 
-                // proto využívá pole záznamů 'component'.
+                // An Observation can either hold a singular value ('valueQuantity' like 'temp' or 'pulse') 
+                // or a composite value utilizing multiple parts. BP contains systole and diastole 
+                // and therefore mandates an array inside the 'component' key.
                 component: [
                     {
                         code: {
@@ -98,7 +98,7 @@ const TEMPLATES = {
                                 display: "Systolic blood pressure"
                             }]
                         },
-                        valueQuantity: {     // NAMĚŘENÁ HODNOTA A JEDNOTKA pro systolu
+                        valueQuantity: {     // MEASURED VALUE AND UNIT for systole
                             value: parseFloat(vals[0]),
                             unit: "mmHg",
                             system: "http://unitsofmeasure.org",
@@ -113,7 +113,7 @@ const TEMPLATES = {
                                 display: "Diastolic blood pressure"
                             }]
                         },
-                        valueQuantity: {     // NAMĚŘENÁ HODNOTA A JEDNOTKA pro diastolu
+                        valueQuantity: {     // MEASURED VALUE AND UNIT for diastole
                             value: parseFloat(vals[1]),
                             unit: "mmHg",
                             system: "http://unitsofmeasure.org",
@@ -124,11 +124,11 @@ const TEMPLATES = {
             };
         },
         
-        // formatDisplay: Funkce připravující HTML vizualizaci hodnoty do textového editoru (Quill blot).
-        // Tento text se zároveň později exportuje do FHIR Bundle narativu.
+        // formatDisplay: Defines the HTML visualization inside the text editor (Quill blot)
+        // This text format will be used exactly as-is in the text-export payload (FHIR Narrative).
         formatDisplay: (val) => `<span title="krevní tlak">${val ? `TK: ${val} mmHg` : 'TK: ___/___ mmHg'}</span>`,
         
-        // renderInput: Vykreslí HTML editačního miniformuláře, když uživatel na záznam klikne.
+        // renderInput: Renders the HTML miniature form when clicked on in the UI popup.
         renderInput: (vals) => `
             <input type="text" class="min-input fhir-input" placeholder="Sys" value="${vals[0] || ''}">
             <span class="min-sep">/</span>
@@ -136,8 +136,8 @@ const TEMPLATES = {
             <span class="min-unit">mmHg</span>
         `,
         
-        // getValue: Extrahuje vrácenou surovou hodnotu z editačního miniformuláře po kliknutí na Uložit.
-        // Tato hodnota se předává do šablony (vrací např. "120/80")
+        // getValue: Extracts the returned raw text value from the form after "Save" is clicked.
+        // Will serve as the primary argument back into the `buildResource` and `formatDisplay` fields (e.g. "120/80").
         getValue: (container) => {
             const inps = container.querySelectorAll('input.fhir-input');
             if (!inps[0].value && !inps[1].value) return '';
@@ -168,9 +168,9 @@ const TEMPLATES = {
             subject: getPatientRef(),
             effectiveDateTime: time,
             performer: [getPractitionerRef()],
-            // Na rozdíl od tlaku, tep představuje jednu jedinou hodnotu, a proto se nepoužívá
-            // pole 'component', ale element 'valueQuantity'. Tímto způsobem je kódována a 
-            // ukládána drtivá většina jednoduchých FHIR měření.
+            // Unlike blood pressure, pulse is a single data value, meaning 'valueQuantity'
+            // is utilized here rather than the 'component' array. This pattern covers a vast 
+            // majority of simple FHIR measurement resources.
             valueQuantity: {
                 value: parseFloat(value),
                 unit: "/min",
@@ -454,28 +454,28 @@ const TEMPLATES = {
 };
 
 // ====================================================================
-// SECTIONS — Definice klinických sekcí (Composition.section)
+// SECTIONS — Clinical sections definitions (Composition.section)
 //
-// Sekce jsou blokové záhlaví/oddělovače v editoru. Obsah pod záhlavím
-// patří do dané sekce, dokud nenarazí na další sekci nebo konec dokumentu.
+// Sections are block headers/separators within the editor. Content following
+// a header gets grouped inside that section until another section is found
+// or the document ends.
 //
-// Konfigurace:
-// - allowedResources: typy FHIR resources povolené v sekci (['*'] = vše)
-// - allowedChildren:  typy podsekci povolené uvnitř (['*'] = vše, [] = žádné)
-// - allowSameTypeChild: zda lze vnořit podsekci stejného typu (výchozí false)
-// - showInList: zda se sekce zobrazuje v primárním seznamu F2 (výchozí true)
+// Configuration:
+// - allowedResources: types of FHIR resources permitted (['*'] = all)
+// - allowedChildren:  types of sub-sections permitted (['*'] = all, [] = none)
+// - allowSameTypeChild: allows nested sub-sections of identical types (default: false)
+// - showInList: toggle section visibility within UI shortcut lists (e.g. F2) (default: true)
 //
-// Jak přidat novou sekci:
-// 1. Přidejte nový klíč do objektu SECTIONS.
-// 2. Vyplňte id, label, icon, keywords, barvy, allowedResources a LOINC kód.
-// 3. Sekce se automaticky objeví v nabídce F2.
+// How to add a new section:
+// 1. Add a new key into the SECTIONS object.
+// 2. Fill missing properties (id, label, icon, keywords, colors, allowedResources, LOINC code).
+// 3. The section automatically appears dynamically inside the UI's F2 list menu.
 // ====================================================================
 const SECTIONS = {
     /**
-     * Obecná sekce — výchozí text bez speciálního účelu.
-     * Představuje hlavní okno editoru bez vizuální sekce.
-     * Zobrazuje se ve vyhledávání pouze pokud ji nadřazená sekce
-     * uvádí v allowedChildren.
+     * General Section — Default text with no specific purpose.
+     * Functions as the main level of the editor outside visual blocks.
+     * Only appears in search if explicitly allowed via `allowedChildren` by the parent.
      */
     general: {
         id: 'general',
@@ -487,14 +487,14 @@ const SECTIONS = {
         allowedResources: ['*'],
         allowedChildren: ['*'],
         allowSameTypeChild: false,
-        showInList: false,          // Nezobrazuje se v primárním seznamu F2
+        showInList: false,          // Do not show in the default UI list
         code: { system: 'http://loinc.org', code: '51848-0', display: 'Assessment note' },
         description: 'Obecná sekce — přijímá všechny typy resources'
     },
 
     /**
-     * Subjektivní obtíže pacienta.
-     * Doporučené budoucí resources: Observation, QuestionnaireResponse
+     * Subjective patient complaints.
+     * Recommended future resources: Observation, QuestionnaireResponse
      */
     subjective: {
         id: 'subjective',
@@ -512,7 +512,7 @@ const SECTIONS = {
     },
 
     /**
-     * Objektivní nález lékaře.
+     * Objective medical findings.
      */
     objective: {
         id: 'objective',
@@ -530,8 +530,8 @@ const SECTIONS = {
     },
 
     /**
-     * Nynější onemocnění (NO).
-     * Budoucí resources: Observation, ImagingStudy, DiagnosticReport
+     * Current illness / History of present illness.
+     * Future resources: Observation, ImagingStudy, DiagnosticReport
      */
     currentIllness: {
         id: 'currentIllness',
@@ -541,7 +541,7 @@ const SECTIONS = {
         color: '#fce7f3',
         borderColor: '#f9a8d4',
         allowedResources: ['Observation'],
-        allowedChildren: ['objective'],     // Obj. jako podsekce NO
+        allowedChildren: ['objective'],     // Objective embedded internally as a sub-section
         allowSameTypeChild: false,
         showInList: true,
         code: { system: 'http://loinc.org', code: '10164-2', display: 'History of present illness' },
@@ -549,8 +549,8 @@ const SECTIONS = {
     },
 
     /**
-     * Epikríza.
-     * Budoucí resources: Observation, ImagingStudy, DiagnosticReport, Condition
+     * Epicrisis / Final outcome or summary.
+     * Future resources: Observation, ImagingStudy, DiagnosticReport, Condition
      */
     epicrisis: {
         id: 'epicrisis',
@@ -568,8 +568,8 @@ const SECTIONS = {
     },
 
     /**
-     * Výkony / Provedené léčebné úkony.
-     * Budoucí resources: Procedure, MedicationRequest, MedicationAdministration
+     * Therapy / Conducted medical procedures.
+     * Future resources: Procedure, MedicationRequest, MedicationAdministration
      */
     therapy: {
         id: 'therapy',
@@ -587,8 +587,8 @@ const SECTIONS = {
     },
 
     /**
-     * Závěr.
-     * Budoucí resources: Condition, ClinicalImpression
+     * Conclusion.
+     * Future resources: Condition, ClinicalImpression
      */
     conclusion: {
         id: 'conclusion',
@@ -606,8 +606,8 @@ const SECTIONS = {
     },
 
     /**
-     * Doporučení / plán péče.
-     * Budoucí resources: CarePlan, ServiceRequest
+     * Recommendations / Care Plans.
+     * Future resources: CarePlan, ServiceRequest
      */
     recommendation: {
         id: 'recommendation',

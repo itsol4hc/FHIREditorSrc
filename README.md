@@ -1,7 +1,5 @@
 # FHIR Editor
 
-[Česky](#česká-verze) | [English](#english-version)
-
 ## 🇨🇿 Česká verze
 
 **FHIR Editor** je opensource webový klinický editor postavený na moderním standardu [HL7 FHIR (Fast Healthcare Interoperability Resources)](https://hl7.org/fhir/). Umožňuje lékařům a zdravotnickému personálu snadno a vizuálně tvořit strukturované klinické zápisy, které jsou na pozadí automaticky převáděny do validního formátu FHIR Document Bundle (JSON).
